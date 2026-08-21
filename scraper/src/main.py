@@ -5,7 +5,21 @@ from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import requests
+from pydantic import BaseModel
 
+def clean_price(price_text):
+    return float(price_text.replace("£", "").strip())
+
+class BookRecord(BaseModel):
+    title: str
+    product_url: str
+    price_text: str
+    price_gbp: float
+    availability_text: str
+    rating_text: str
+    description: str | None = None
+    source_page: str
+    fetched_at: str
 
 URL="https://books.toscrape.com/catalogue/page-1.html"
 headers = {
@@ -17,6 +31,7 @@ page_num=1
 book_urls = []
 book_sources = {}
 records=[]
+errors=[]
 while True:
     cache_file=os.path.join(
         CACHE_DIR,
@@ -34,6 +49,7 @@ while True:
         response = requests.get(current_url, headers=headers, timeout=10)
         if response.status_code != 200:
             print(f"fetch failed , {response.status_code}")
+            break
         else:
             with open(cache_file, "w", encoding=("utf-8")) as file:
                 file.write(response.text)
@@ -82,7 +98,7 @@ while True:
         break
 
 
-unique_urls = set(book_urls)
+unique_urls = list(dict.fromkeys(book_urls))
 DETAIL_CACHE_DIR = os.path.join(CACHE_DIR, "details")
 os.makedirs(DETAIL_CACHE_DIR, exist_ok=True)
 
@@ -184,23 +200,56 @@ for product_url in unique_urls:
 #retrive source page
     source_page = book_sources[product_url]
     print("Source page:", source_page)
-
+    price_gbp=clean_price(price_text)
     record = {
         "title": title_text,
         "product_url": product_url,
         "price_text": price_text,
+        "price_gbp":price_gbp,
         "availability_text": availability_text,
         "rating_text": rating_text,
         "description": description,
         "source_page": source_page,
         "fetched_at": fetched_at
     }
-    records.append(record)
-    print("Record created.")
+    try:
+        validated_record = BookRecord(**record)
+        records.append(validated_record.model_dump())
+        print("Record valid.")
+    except Exception as error:
+        print("Record invalid:", error)
+        errors.append({
+            "product_url": product_url,
+            "error": str(error)
+        })
 
 print("\n=============================")
 print(f"detail_pages={len(records)}")
 print("=============================")
+
+#books.json
+OUTPUT_DIR = os.path.join(os.path.dirname(CACHE_DIR),"output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+BOOKS_FILE = os.path.join(OUTPUT_DIR,"books.json")
+with open(BOOKS_FILE, "w", encoding="utf-8") as file:
+    json.dump(records,file,indent=2,ensure_ascii=False
+    )
+print(f"Saved {len(records)} records to {BOOKS_FILE}")
+
+#error.json
+ERRORS_FILE = os.path.join(
+    OUTPUT_DIR,
+    "errors.json"
+)
+with open(ERRORS_FILE, "w", encoding="utf-8") as file:
+    json.dump(
+        errors,
+        file,
+        indent=2,
+        ensure_ascii=False
+    )
+print(f"Saved {len(records)} records to {BOOKS_FILE}")
+print(f"Saved {len(errors)} errors to {ERRORS_FILE}")
 
 if records:
     print(json.dumps(records[0], indent=2, ensure_ascii=False))
