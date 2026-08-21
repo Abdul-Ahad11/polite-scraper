@@ -1,1 +1,6 @@
-[]
+[
+  {
+    "product_url": "https://books.toscrape.com/catalogue/fake-book_000/index.html",
+    "error": "Failed to fetch product page"
+  }
+]

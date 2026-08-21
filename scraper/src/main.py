@@ -7,6 +7,14 @@ from urllib.parse import urljoin
 import requests
 from pydantic import BaseModel
 
+run_started_at = datetime.now(timezone.utc)
+
+pages_fetched = 0
+cache_hits = 0
+valid_records = 0
+invalid_records = 0
+failed_pages = 0
+
 def clean_price(price_text):
     return float(price_text.replace("£", "").strip())
 
@@ -26,6 +34,52 @@ headers = {
     "User-Agent": "FlyRankInternship-A9/1.0 (+https://github.com/Abdul-Ahad11/polite-scraper)"
 }
 CACHE_DIR="/Users/abdulahad/Downloads/polite-scraper/scraper/cache"
+def fetch_with_retry(url):
+    try:
+        response = requests.get(url,headers=headers,timeout=10)
+        # Success
+        if response.status_code == 200:
+            return response
+        # Retry 5xx server errors once
+        if 500 <= response.status_code <= 599:
+            print(f"Server error {response.status_code}. Retrying once...")
+            time.sleep(1)
+
+            response = requests.get(url,headers=headers,timeout=10)
+
+            if response.status_code == 200:
+                return response
+
+            print(f"Retry failed with status {response.status_code}")
+            return None
+        # Never retry 403 or 404
+        if response.status_code in (403, 404):
+            print(f"Not retrying status {response.status_code}")
+            return None
+        print(f"Request failed with status {response.status_code}")
+        return None
+    except requests.exceptions.Timeout:
+        print("Request timed out. Retrying once...")
+        time.sleep(1)
+        try:
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=10
+            )
+            if response.status_code == 200:
+                return response
+            print(f"Retry failed with status {response.status_code}")
+            return None
+        except requests.exceptions.RequestException as error:
+            print(f"Retry failed: {error}")
+            return None
+
+    except requests.exceptions.RequestException as error:
+        print(f"Request failed: {error}")
+        return None
+
+
 current_url=URL
 page_num=1
 book_urls = []
@@ -99,6 +153,14 @@ while True:
 
 
 unique_urls = list(dict.fromkeys(book_urls))
+
+# CHECKPOINT: add one intentionally fake URL
+fake_url = "https://books.toscrape.com/catalogue/fake-book_000/index.html"
+unique_urls.append(fake_url)
+
+print(f"discovered={len(book_urls)}")
+print(f"unique_urls={len(unique_urls)}")
+
 DETAIL_CACHE_DIR = os.path.join(CACHE_DIR, "details")
 os.makedirs(DETAIL_CACHE_DIR, exist_ok=True)
 
@@ -126,6 +188,7 @@ for product_url in unique_urls:
     if os.path.exists(detail_cache_file):
 
         print("CACHE HIT")
+        cache_hits += 1
 
         with open(detail_cache_file, "r", encoding="utf-8") as file:
             html = file.read()
@@ -140,15 +203,18 @@ for product_url in unique_urls:
         print(f"Response size: {len(html.encode('utf-8'))} bytes")
     else:
         print("FETCH")
-        response = requests.get(
-            product_url,
-            headers=headers,
-            timeout=10
-        )
-        print("Status:", response.status_code)
-        if response.status_code != 200:
+        response = fetch_with_retry(product_url)
+        if response is None:
             print("Fetch failed. Skipping this book.")
+            failed_pages += 1
+            errors.append({
+                "product_url": product_url,
+                "error": "Failed to fetch product page"
+            })
             continue
+        pages_fetched += 1
+        print("Status:", response.status_code)
+
         html = response.content.decode("utf-8")
 
         with open(detail_cache_file, "w", encoding="utf-8") as file:
@@ -215,13 +281,12 @@ for product_url in unique_urls:
     try:
         validated_record = BookRecord(**record)
         records.append(validated_record.model_dump())
+        valid_records += 1
         print("Record valid.")
     except Exception as error:
         print("Record invalid:", error)
-        errors.append({
-            "product_url": product_url,
-            "error": str(error)
-        })
+        invalid_records += 1
+        errors.append({"product_url": product_url,"error": str(error)})
 
 print("\n=============================")
 print(f"detail_pages={len(records)}")
@@ -250,6 +315,36 @@ with open(ERRORS_FILE, "w", encoding="utf-8") as file:
     )
 print(f"Saved {len(records)} records to {BOOKS_FILE}")
 print(f"Saved {len(errors)} errors to {ERRORS_FILE}")
+
+run_finished_at = datetime.now(timezone.utc)
+
+duration_seconds = (
+    run_finished_at - run_started_at
+).total_seconds()
+
+RUN_REPORT_FILE = os.path.join(
+    OUTPUT_DIR,
+    "run-report.json"
+)
+
+run_report = {
+    "started_at": run_started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "finished_at": run_finished_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "duration_seconds": duration_seconds,
+    "pages_fetched": pages_fetched,
+    "cache_hits": cache_hits,
+    "valid_records": valid_records,
+    "invalid_records": invalid_records,
+    "failed_pages": failed_pages
+}
+with open(RUN_REPORT_FILE, "w", encoding="utf-8") as file:
+    json.dump(
+        run_report,
+        file,
+        indent=2,
+        ensure_ascii=False
+    )
+print(f"Saved run report to {RUN_REPORT_FILE}")
 
 if records:
     print(json.dumps(records[0], indent=2, ensure_ascii=False))
