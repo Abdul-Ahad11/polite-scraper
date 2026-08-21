@@ -1,134 +1,201 @@
 # The Polite Scraper
 
-A small, well-behaved scraping pipeline built for FlyRank Internship — Backend Track, Week 5, Assignment A9.
+**FlyRank Internship — Backend Track — Week 5 — Assignment A9**
 
-It downloads the first three catalogue pages of [Books to Scrape](https://books.toscrape.com), visits all 60 book pages, turns the raw HTML into clean, schema-validated JSON, survives a broken page without crashing, and ends every run with a short report of what happened.
+## About This Assignment
 
-**Pipeline:** `fetch → extract → normalize → validate → store → report`
+The assignment is to build a small, respectful scraping pipeline against [Books to Scrape](https://books.toscrape.com/), a public sandbox site made specifically for web-scraping practice.
+
+The goal is to download the first three catalogue pages, follow them to all 60 book pages, turn the HTML into clean, schema-checked JSON, keep the run alive even if one page fails, and finish with an honest report of what happened.
+
+The underlying idea is that scraping is not simply "open a page and copy the text" — it is a chain of small, provable steps:
+
+| Step | Question It Answers | Proof |
+|---|---|---|
+| Classify | May I automate this site? | A note in the README |
+| Fetch | Did the page really arrive? | Saved HTML + status 200 |
+| Extract | Which parts do I need? | Raw text fields |
+| Normalize | How does `"£51.77"` become a number? | Clean values, absolute URLs |
+| Validate | Is every record safe to store? | Schema check; bad records set aside |
+| Store | Can another program use it? | `books.json` |
+| Report | Did the run actually work? | A few honest numbers |
+
+Three habits run through the whole assignment:
+
+- **Check before you collect** — classify the target first.
+- **Be a polite guest** — identify yourself, go slowly, and never hammer the site.
+- **Trust nothing you scraped** — web pages are untrusted input until validated.
 
 ---
 
-## Target classification
+## Tasks
+
+The work is divided into seven required stages, completed in order, with each stage ending in a checkpoint and a commit:
+
+1. **Check before you collect** — confirm that Books to Scrape is a practice sandbox, check `robots.txt`, and write a target-classification note in the README.
+
+2. **Fetch once, cache once** — download catalogue page 1 with a real user-agent, a timeout, and a status check; cache it so re-runs do not unnecessarily hit the site.
+
+3. **Find all three pages** — parse the cached HTML, follow the site's own "next" link through all three catalogue pages, and collect and deduplicate all 60 book URLs.
+
+4. **Extract the raw records** — visit each of the 60 book pages and pull eight raw fields per book:
+   - title
+   - URL
+   - price text
+   - availability
+   - rating
+   - description
+   - source page
+   - fetch time
+
+5. **Clean it, check it, store it** — normalize price text into a number, validate every record against a schema, write valid records to `books.json`, and write rejected records to `errors.json`.
+
+6. **Survive failures, report the run** — handle each page independently so one broken page does not take down the entire run; finish with a `run-report.json` containing honest run statistics.
+
+7. **Publish the evidence** — push the project to a public repository with a README that a stranger can run in five minutes. The README includes target classification, run instructions, schema, politeness rules, a real run report, a limitation, and an ethics note.
+
+### Optional Bonus — The AI Rematch
+
+The optional bonus stage asks you to prompt an AI to rebuild the same pipeline from a description and then compare its output against your own implementation — what it did better, what it missed, and what the original prompt failed to specify.
+
+---
+
+## What I Built
 
 | | |
 |---|---|
-| **Site** | `books.toscrape.com` |
-| **Why** | It is a public sandbox explicitly built for people to practise scraping on — stated on the site itself. |
-| **Scope** | The first 3 catalogue pages only (60 book listings, followed via the site's own "next" link — not hardcoded). |
-| **Data collected** | Title, price, availability, star rating, description, and canonical URL for each book. Nothing beyond what's needed for the assignment. |
-| **`robots.txt` check** | Requested `https://books.toscrape.com/robots.txt` once → **404 Not Found**. No robots file exists. A missing file is not treated as blanket permission — it's simply the absence of a rule — so scope was still kept to the sandbox's intended practice use (3 pages, one polite pass). |
+| **Lane** | Python 3.10+ — `requests`, `BeautifulSoup4`, `Pydantic` |
+| **Target** | `books.toscrape.com` — first 3 catalogue pages, 60 books |
+| **`robots.txt`** | Requested once → **404 Not Found**. No robots rules were available. The scraper was still limited to the sandbox's intended scope: three catalogue pages and one polite pass. |
+| **Output** | `output/books.json`, `output/errors.json`, `output/run-report.json` |
+
+The pipeline runs with one command. It fetches each page, reads from cache on repeat runs, extracts the eight raw fields per book, normalizes prices and URLs, validates every record with Pydantic, writes the results, and finishes with a run report.
+
+A deliberately broken URL was added to the book list to prove that one bad page does not take down the entire run. The successful records are still written to `books.json`, while the failure is recorded in `errors.json` and reflected in the run report.
 
 > I will not reuse this code on another site without checking its rules and terms first.
 
 ---
 
-## Lane & installation
-
-**Python 3.10+**, using `requests`, `BeautifulSoup4`, and `Pydantic`.
+## Quick Start
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>/scraper
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+git clone https://github.com/Abdul-Ahad11/polite-scraper.git
+
+cd polite-scraper/scraper
+
+python -m venv venv
+
+# macOS/Linux
+source venv/bin/activate
+
+# Windows
+# venv\Scripts\activate
+
 pip install -r requirements.txt
-```
 
-## Run it
-
-```bash
 python src/main.py
 ```
 
-This single command fetches (or reads from cache), extracts, normalizes, validates, and stores all 60 records, then writes a run report. Re-running it produces the same 60 records — never duplicates — and reads mostly from cache.
+Re-running the command does not create duplicate records. Previously downloaded pages are read from the cache instead of being fetched again.
 
 ---
 
-## Project structure
-
-```
-scraper/
-├── src/
-│   └── main.py           # entry point: runs the full pipeline
-├── cache/                 # saved HTML responses (gitignored)
-├── output/
-│   ├── books.json         # 60 validated records
-│   ├── errors.json        # records that failed validation, with reasons
-│   └── run-report.json    # honest numbers for the run
-├── requirements.txt
-├── .gitignore
-└── README.md
-```
-
----
-
-## Record schema
-
-**Raw record** (as extracted from each book page):
-
-```json
-{
-  "title": "A Light in the Attic",
-  "product_url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
-  "price_text": "£51.77",
-  "availability_text": "In stock (22 available)",
-  "rating_text": "Three",
-  "description": "...",
-  "source_page": "https://books.toscrape.com/catalogue/page-1.html",
-  "fetched_at": "2026-08-06T10:00:00Z"
-}
-```
-
-**Validated record** (stored in `books.json`, checked with Pydantic):
+## Record Schema
 
 | Field | Type | Notes |
 |---|---|---|
-| `title` | `str` | required |
-| `product_url` | `HttpUrl` | required — canonical identity of the record |
-| `price_text` | `str` | required — original text, kept alongside the clean value |
-| `price_gbp` | `float` | required — numeric price parsed from `price_text` |
-| `availability_text` | `str` | required |
-| `rating_text` | `str` | required |
-| `description` | `str \| null` | optional — `null` when the page has none, never invented |
-| `source_page` | `HttpUrl` | required — provenance |
-| `fetched_at` | `str` (ISO 8601) | required — provenance |
+| `title` | `str` | Required |
+| `product_url` | `HttpUrl` | Required — canonical identity of the record |
+| `price_text` | `str` | Required — original price text |
+| `price_gbp` | `float` | Required — numeric price parsed from `price_text` |
+| `availability_text` | `str` | Required |
+| `rating_text` | `str` | Required |
+| `description` | `str \| null` | Optional — `null` when the page has no description; never invented |
+| `source_page` | `HttpUrl` | Required — provenance of the record |
+| `fetched_at` | `str` | Required — ISO 8601 timestamp |
 
-Records are deduplicated on `product_url`. Anything that fails validation is written to `errors.json` with the reason, never into `books.json`.
+Records are deduplicated using `product_url`.
+
+Records that fail validation are written to `errors.json` with the reason for rejection and are never written to `books.json`.
 
 ---
 
-## Politeness rules
+## Politeness Rules
 
-- **User-agent:** every request identifies itself, e.g. `FlyRankInternshipA9/1.0 (+https://github.com/<your-username>/<your-repo>)`.
-- **Timeout:** every request gives up after a few seconds rather than hanging.
-- **Delay:** at least 500 ms between real requests to the site. Cache hits add no delay.
-- **Cache:** every page is saved to `cache/` on first fetch; development re-reads the saved copy instead of re-hitting the site.
-- **Status check:** only `200` is treated as a successful fetch. `404` and `403` are never retried; `5xx` and timeouts get a single retry.
+- **User-Agent:** Every request identifies itself:
 
-## Failure handling
+  `FlyRankInternship-A9/1.0 (+https://github.com/Abdul-Ahad11/polite-scraper)`
 
-Each page is fetched and parsed independently, so one broken page is logged and skipped without taking down the run. This was verified by adding one deliberately fake book URL to the list — the run still finished with all 60 good records, and `run-report.json` reported `"failed_pages": 1`.
+- **Timeout:** Every request has a timeout so the scraper does not hang indefinitely.
 
-## Sample run report
+- **Delay:** At least 500 ms between real requests. Cache hits do not add a delay.
+
+- **Cache:** Every successfully fetched page is saved on the first request. Development re-runs read the saved copy from the cache.
+
+- **Retries:** `5xx` responses and timeouts receive one retry. `404` and `403` responses are not retried.
+
+---
+
+## Sample Run Report
+
+The following section should contain the **actual contents of `output/run-report.json` from a real run**.
 
 ```json
-<paste your actual output/run-report.json here>
+PASTE THE ACTUAL CONTENT OF output/run-report.json HERE
 ```
-
-## Why no browser was needed
-
-The book data — title, price, availability, rating, description — is already present in the HTML the server sends on first request; nothing is rendered client-side with JavaScript. A headless browser would only add cost (memory, startup time, complexity) with no extra data in return.
-
-## Ethics note
-
-- Use an official API instead of scraping whenever one exists.
-- Never bypass logins, paywalls, or explicit blocks.
-- Collect only the data actually needed for the task, at a low, respectful rate.
-- This project touches a single public practice sandbox built for exactly this purpose — the approach here is not assumed valid for any other site.
-
-## Known limitation
-
-<one honest limitation — e.g. retry logic is a single attempt with a fixed wait, not full exponential backoff; that upgrade is scoped for next week's assignment (A16).>
 
 ---
 
-Built for FlyRank Internship, Backend Track — Week 5, Assignment A9.
+## Why No Browser Was Needed
+
+The book data is already present in the HTML returned by the server. Nothing required for this assignment is rendered client-side with JavaScript.
+
+Therefore, a headless browser would add additional complexity and resource usage without providing additional data.
+
+---
+
+## Ethics Note
+
+Use an official API instead of scraping whenever one exists.
+
+Never bypass logins, paywalls, authentication, or explicit access restrictions.
+
+Collect only the information that is necessary and use a low, respectful request rate.
+
+This project targets a single public practice sandbox built specifically for scraping practice. Nothing in this implementation is assumed to be valid for another website.
+
+---
+
+## Known Limitation
+
+The retry mechanism is limited to one fixed-wait retry rather than using full exponential backoff.
+
+---
+
+## Project Structure
+
+```text
+polite-scraper/
+└── scraper/
+    ├── cache/
+    ├── output/
+    │   ├── books.json
+    │   ├── errors.json
+    │   └── run-report.json
+    ├── src/
+    │   └── main.py
+    ├── README.md
+    ├── requirements.txt
+    └── .gitignore
+```
+
+---
+
+## Repository
+
+[GitHub Repository](https://github.com/Abdul-Ahad11/polite-scraper)
+
+---
+
+Built for **FlyRank Internship — Backend Track — Week 5 — Assignment A9**.
